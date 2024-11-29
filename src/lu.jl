@@ -87,7 +87,7 @@ end
 
 # the following method is meant to catch calls to lu!(A::LAPACKArray) without a pivoting strategy
 lu!(A::StridedMatrix{<:BlasFloat}; check::Bool = true, allowsingular::Bool = false) = lu!(A, RowMaximum(); check, allowsingular)
-function lu!(A::StridedMatrix{T}, ::RowMaximum,ipiv::AbstractVector{BlasInt} = Vector{BlasInt}(undef,min(size(A)...)); check::Bool = true, allowsingular::Bool = false) where {T<:BlasFloat}
+function lu!(A::StridedMatrix{T}, ::RowMaximum, ipiv::AbstractVector{BlasInt} = Vector{BlasInt}(undef,min(size(A)...)); check::Bool = true, allowsingular::Bool = false) where {T<:BlasFloat}
     lpt = LAPACK.getrf!(A, ipiv; check)
     check && _check_lu_success(lpt[3], allowsingular)
     return LU{T,typeof(lpt[1]),typeof(lpt[2])}(lpt[1], lpt[2], lpt[3])
