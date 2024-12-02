@@ -115,8 +115,7 @@ end
 
 function lu!(F::LU{<:Any,<:AbstractMatrix}, A; check::Bool = true, allowsingular::Bool = false)
     copyto!(F.factors, A)
-    generic_lufact!(F.factors, lupivottype(eltype(A)), F.ipiv; check, allowsingular)
-    return F
+    return generic_lufact!(F.factors, lupivottype(eltype(A)), F.ipiv; check, allowsingular)
 end
 
 
