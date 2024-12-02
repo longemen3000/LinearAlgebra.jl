@@ -105,30 +105,16 @@ end
 
 #reusing LU object
 #lu!(F::LU,A) should be dispatched on the type of matrix stored in the LU factorization.
-#but special care needs to be done in the HermOrSym case
-function _lu_copy!(A,x)
-    copyto!(A, x)
-end
-
-function lu_copy!(A,x::HermOrSym)
-    copytri!(A.data, x.uplo, isa(x, Hermitian))
-    @inbounds if isa(x, Hermitian) # realify diagonal
-        for i in axes(x, 1)
-            A[i,i] = x[i,i]
-        end
-    end
-    return A
-end
 
 function lu!(F::LU{<:Any,<:StridedMatrix{<:BlasFloat}}, A; check::Bool = true, allowsingular::Bool = false)
-    lu_copy!(F.factors,A)
+    copyto!(F.factors,A)
     lpt = LAPACK.getrf!(F.factors, F.ipiv; check)
     check && _check_lu_success(lpt[3], allowsingular)
     return F
 end
 
 function lu!(F::LU{<:Any,<:AbstractMatrix}, A; check::Bool = true, allowsingular::Bool = false)
-    lu_copy!(F.factors,A)
+    copyto!(F.factors,A)
     generic_lufact!(F.factors, lupivottype(eltype(A)), F.ipiv; check, allowsingular)
     return F
 end
