@@ -107,14 +107,14 @@ end
 #lu!(F::LU,A) should be dispatched on the type of matrix stored in the LU factorization.
 
 function lu!(F::LU{<:Any,<:StridedMatrix{<:BlasFloat}}, A; check::Bool = true, allowsingular::Bool = false)
-    copyto!(F.factors,A)
+    copyto!(F.factors, A)
     lpt = LAPACK.getrf!(F.factors, F.ipiv; check)
     check && _check_lu_success(lpt[3], allowsingular)
     return LU{T,typeof(lpt[1]),typeof(lpt[2])}(lpt[1], lpt[2], lpt[3])
 end
 
 function lu!(F::LU{<:Any,<:AbstractMatrix}, A; check::Bool = true, allowsingular::Bool = false)
-    copyto!(F.factors,A)
+    copyto!(F.factors, A)
     generic_lufact!(F.factors, lupivottype(eltype(A)), F.ipiv; check, allowsingular)
     return F
 end
