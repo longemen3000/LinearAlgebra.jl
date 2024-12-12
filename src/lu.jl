@@ -103,22 +103,63 @@ function lu!(A::HermOrSym{T}, pivot::Union{RowMaximum,NoPivot,RowNonZero} = lupi
     lu!(A.data, pivot; check, allowsingular)
 end
 
-#reusing LU object
 #lu!(F::LU,A) should be dispatched on the type of matrix stored in the LU factorization.
+"""
+    lu!(F::LU, pivot = RowMaximum(); check = true, allowsingular = false) -> LU
 
+`lu!` is the same as [`lu`](@ref), but saves space by overwriting the
+input `F`, instead of creating a copy.
+
+!!! compat "Julia 1.12"
+    reusing `LU` factorizations in `lu!` require Julia 1.12 or later.
+
+# Examples
+```jldoctest
+julia> A = [4. 3.; 6. 3.]
+2×2 Matrix{Float64}:
+ 4.0  3.0
+ 6.0  3.0
+
+julia> F = lu(A)
+LU{Float64, Matrix{Float64}, Vector{Int64}}
+L factor:
+2×2 Matrix{Float64}:
+ 1.0       0.0
+ 0.666667  1.0
+U factor:
+2×2 Matrix{Float64}:
+ 6.0  3.0
+ 0.0  1.0
+
+julia> B = [8 3; 12 3]
+2×2 Matrix{Int64}:
+ 8  3
+ 12  3
+
+julia> F2 = lu!(F,A)
+LU{Float64, Matrix{Float64}, Vector{Int64}}
+L factor:
+2×2 Matrix{Float64}:
+ 1.0       0.0
+ 0.666667  1.0
+U factor:
+2×2 Matrix{Float64}:
+ 12.0  3.0
+  0.0  1.0
+```
+"""
+function lu!(F::LU{<:Any,<:AbstractMatrix}, A; check::Bool = true, allowsingular::Bool = false)
+    copyto!(F.factors, A)
+    return generic_lufact!(F.factors, lupivottype(eltype(A)), F.ipiv; check, allowsingular)
+end
+
+#lu!(F::LU,A) should be dispatched on the type of matrix stored in the LU factorization.
 function lu!(F::LU{<:Any,<:StridedMatrix{<:BlasFloat}}, A; check::Bool = true, allowsingular::Bool = false)
     copyto!(F.factors, A)
     lpt = LAPACK.getrf!(F.factors, F.ipiv; check)
     check && _check_lu_success(lpt[3], allowsingular)
     return LU{T,typeof(lpt[1]),typeof(lpt[2])}(lpt[1], lpt[2], lpt[3])
 end
-
-function lu!(F::LU{<:Any,<:AbstractMatrix}, A; check::Bool = true, allowsingular::Bool = false)
-    copyto!(F.factors, A)
-    return generic_lufact!(F.factors, lupivottype(eltype(A)), F.ipiv; check, allowsingular)
-end
-
-
 
 # for backward compatibility
 # TODO: remove towards Julia v2
