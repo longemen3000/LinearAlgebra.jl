@@ -158,7 +158,7 @@ function lu!(F::LU{<:Any,<:StridedMatrix{<:BlasFloat}}, A; check::Bool = true, a
     copyto!(F.factors, A)
     lpt = LAPACK.getrf!(F.factors, F.ipiv; check)
     check && _check_lu_success(lpt[3], allowsingular)
-    return LU{T,typeof(lpt[1]),typeof(lpt[2])}(lpt[1], lpt[2], lpt[3])
+    return LU{eltype(lpt[1]),typeof(lpt[1]),typeof(lpt[2])}(lpt[1], lpt[2], lpt[3])
 end
 
 # for backward compatibility
