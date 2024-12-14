@@ -111,7 +111,7 @@ end
 input `F`, instead of creating a copy.
 
 !!! compat "Julia 1.12"
-    reusing `LU` factorizations in `lu!` require Julia 1.12 or later.
+    Reusing dense `LU` factorizations in `lu!` require Julia 1.12 or later.
 
 # Examples
 ```jldoctest
