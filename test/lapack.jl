@@ -676,14 +676,13 @@ end
 @testset "posv and some errors for friends" begin
     @testset for elty in (Float32, Float64, ComplexF32, ComplexF64)
         local n = 10
-        Random.seed!(123)
-        A = randn(elty,n,n)
-        A = A'*A
-        B = rand(elty,n,n)
+        a = randn(elty, n, n)
+        A = a'*a
+        B = rand(elty, n, n)
         D = copy(A)
         C = copy(B)
-        D,C = LAPACK.posv!('U',D,C)
-        @test A\B ≈ C
+        D, C = LAPACK.posv!('U', D, C)
+        @test A\B ≈ C rtol=cond(A)*eps(real(elty))
         offsizemat = Matrix{elty}(undef, n+1, n+1)
         @test_throws DimensionMismatch LAPACK.posv!('U', D, offsizemat)
         @test_throws DimensionMismatch LAPACK.potrs!('U', D, offsizemat)
