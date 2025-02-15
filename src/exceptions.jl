@@ -29,7 +29,7 @@ struct SingularException <: Exception
 end
 
 function Base.showerror(io::IO, ex::SingularException)
-    print(io, "SingularException: matrix is singular; factorization failed. Zero eigenvalue found at index ", ex.info)
+    print(io, "SingularException: matrix is singular; factorization failed. Zero pivot found at index ", ex.info)
 end
 
 """
