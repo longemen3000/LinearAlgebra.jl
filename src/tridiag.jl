@@ -478,7 +478,7 @@ end
     elseif i + 1 == j
         return @inbounds A.ev[i]
     else
-        return zero(T)
+        return diagzero(A, i, j)
     end
 end
 
@@ -740,7 +740,7 @@ end
     elseif i + 1 == j
         return @inbounds A.du[i]
     else
-        return zero(T)
+        return diagzero(A, i, j)
     end
 end
 
@@ -753,7 +753,7 @@ end
     elseif b.band == 1
         return @inbounds A.du[b.index]
     else
-        return zero(T)
+        return diagzero(A, b)
     end
 end
 
