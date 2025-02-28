@@ -139,10 +139,10 @@ julia> UnitUpperTriangular(A)
 """
 UnitUpperTriangular
 
-const UpperOrUnitUpperTriangular{T,S} = Union{UpperTriangular{T,S}, UnitUpperTriangular{T,S}}
-const LowerOrUnitLowerTriangular{T,S} = Union{LowerTriangular{T,S}, UnitLowerTriangular{T,S}}
-const UpperOrLowerTriangular{T,S} = Union{UpperOrUnitUpperTriangular{T,S}, LowerOrUnitLowerTriangular{T,S}}
-const UnitUpperOrUnitLowerTriangular{T,S} = Union{UnitUpperTriangular{T,S}, UnitLowerTriangular{T,S}}
+const UpperOrUnitUpperTriangular{T,S<:AbstractMatrix{T}} = Union{UpperTriangular{T,S}, UnitUpperTriangular{T,S}}
+const LowerOrUnitLowerTriangular{T,S<:AbstractMatrix{T}} = Union{LowerTriangular{T,S}, UnitLowerTriangular{T,S}}
+const UpperOrLowerTriangular{T,S<:AbstractMatrix{T}} = Union{UpperOrUnitUpperTriangular{T,S}, LowerOrUnitLowerTriangular{T,S}}
+const UnitUpperOrUnitLowerTriangular{T,S<:AbstractMatrix{T}} = Union{UnitUpperTriangular{T,S}, UnitLowerTriangular{T,S}}
 
 uppertriangular(M) = UpperTriangular(M)
 lowertriangular(M) = LowerTriangular(M)
@@ -1074,6 +1074,8 @@ _trimul!(C::AbstractMatrix, A::UpperOrLowerTriangular, B::AbstractTriangular) =
 _trimul!(C::AbstractMatrix, A::AbstractTriangular, B::UpperOrLowerTriangular) =
     generic_mattrimul!(C, uplo_char(B), isunit_char(B), wrapperop(parent(B)), A, _unwrap_at(parent(B)))
 
+# methods for LinearAlgebra.jl's own triangular types, to avoid `istriu` checks
+lmul!(A::UpperOrLowerTriangular, B::AbstractVecOrMat) = @inline _trimul!(B, A, B)
 function lmul!(A::AbstractTriangular, B::AbstractVecOrMat)
     if istriu(A)
         _trimul!(B, uppertriangular(A), B)
@@ -1081,6 +1083,7 @@ function lmul!(A::AbstractTriangular, B::AbstractVecOrMat)
         _trimul!(B, lowertriangular(A), B)
     end
 end
+rmul!(A::AbstractMatrix, B::UpperOrLowerTriangular) = @inline _trimul!(A, A, B)
 function rmul!(A::AbstractMatrix, B::AbstractTriangular)
     if istriu(B)
         _trimul!(A, A, uppertriangular(B))
@@ -1091,7 +1094,7 @@ end
 
 for TC in (:AbstractVector, :AbstractMatrix)
     @eval @inline function _mul!(C::$TC, A::AbstractTriangular, B::AbstractVector, alpha::Number, beta::Number)
-        check_A_mul_B!_sizes(size(C), size(A), size(B))
+        matmul_size_check(size(C), size(A), size(B))
         if isone(alpha) && iszero(beta)
             return _trimul!(C, A, B)
         else
@@ -1104,7 +1107,7 @@ for (TA, TB) in ((:AbstractTriangular, :AbstractMatrix),
                     (:AbstractTriangular, :AbstractTriangular)
                 )
     @eval @inline function _mul!(C::AbstractMatrix, A::$TA, B::$TB, alpha::Number, beta::Number)
-        check_A_mul_B!_sizes(size(C), size(A), size(B))
+        matmul_size_check(size(C), size(A), size(B))
         if isone(alpha) && iszero(beta)
             return _trimul!(C, A, B)
         else
@@ -1205,15 +1208,37 @@ end
 # multiplication
 generic_trimatmul!(c::StridedVector{T}, uploc, isunitc, tfun::Function, A::StridedMatrix{T}, b::AbstractVector{T}) where {T<:BlasFloat} =
     BLAS.trmv!(uploc, tfun === identity ? 'N' : tfun === transpose ? 'T' : 'C', isunitc, A, c === b ? c : copyto!(c, b))
-generic_trimatmul!(C::StridedMatrix{T}, uploc, isunitc, tfun::Function, A::StridedMatrix{T}, B::AbstractMatrix{T}) where {T<:BlasFloat} =
-    BLAS.trmm!('L', uploc, tfun === identity ? 'N' : tfun === transpose ? 'T' : 'C', isunitc, one(T), A, C === B ? C : copyto!(C, B))
-generic_mattrimul!(C::StridedMatrix{T}, uploc, isunitc, tfun::Function, A::AbstractMatrix{T}, B::StridedMatrix{T}) where {T<:BlasFloat} =
-    BLAS.trmm!('R', uploc, tfun === identity ? 'N' : tfun === transpose ? 'T' : 'C', isunitc, one(T), B, C === A ? C : copyto!(C, A))
+function generic_trimatmul!(C::StridedMatrix{T}, uploc, isunitc, tfun::Function, A::StridedMatrix{T}, B::AbstractMatrix{T}) where {T<:BlasFloat}
+    if stride(C,1) == stride(A,1) == 1
+        BLAS.trmm!('L', uploc, tfun === identity ? 'N' : tfun === transpose ? 'T' : 'C', isunitc, one(T), A, C === B ? C : copyto!(C, B))
+    else # incompatible with BLAS
+        @invoke generic_trimatmul!(C::AbstractMatrix, uploc, isunitc, tfun::Function, A::AbstractMatrix, B::AbstractMatrix)
+    end
+end
+function generic_mattrimul!(C::StridedMatrix{T}, uploc, isunitc, tfun::Function, A::AbstractMatrix{T}, B::StridedMatrix{T}) where {T<:BlasFloat}
+    if stride(C,1) == stride(B,1) == 1
+        BLAS.trmm!('R', uploc, tfun === identity ? 'N' : tfun === transpose ? 'T' : 'C', isunitc, one(T), B, C === A ? C : copyto!(C, A))
+    else # incompatible with BLAS
+        @invoke generic_mattrimul!(C::AbstractMatrix, uploc, isunitc, tfun::Function, A::AbstractMatrix, B::AbstractMatrix)
+    end
+end
 # division
-generic_trimatdiv!(C::StridedVecOrMat{T}, uploc, isunitc, tfun::Function, A::StridedMatrix{T}, B::AbstractVecOrMat{T}) where {T<:BlasFloat} =
-    LAPACK.trtrs!(uploc, tfun === identity ? 'N' : tfun === transpose ? 'T' : 'C', isunitc, A, C === B ? C : copyto!(C, B))
-generic_mattridiv!(C::StridedMatrix{T}, uploc, isunitc, tfun::Function, A::AbstractMatrix{T}, B::StridedMatrix{T}) where {T<:BlasFloat} =
-    BLAS.trsm!('R', uploc, tfun === identity ? 'N' : tfun === transpose ? 'T' : 'C', isunitc, one(T), B, C === A ? C : copyto!(C, A))
+generic_trimatdiv!(C::StridedVector{T}, uploc, isunitc, tfun::Function, A::StridedMatrix{T}, B::AbstractVector{T}) where {T<:BlasFloat} =
+    BLAS.trsv!(uploc, tfun === identity ? 'N' : tfun === transpose ? 'T' : 'C', isunitc, A, C === B ? C : copyto!(C, B))
+function generic_trimatdiv!(C::StridedMatrix{T}, uploc, isunitc, tfun::Function, A::StridedMatrix{T}, B::AbstractMatrix{T}) where {T<:BlasFloat}
+    if stride(C,1) == stride(A,1) == 1
+        BLAS.trsm!('L', uploc, tfun === identity ? 'N' : tfun === transpose ? 'T' : 'C', isunitc, one(T), A, C === B ? C : copyto!(C, B))
+    else # incompatible with LAPACK
+        @invoke generic_trimatdiv!(C::AbstractVecOrMat, uploc, isunitc, tfun::Function, A::AbstractMatrix, B::AbstractMatrix)
+    end
+end
+function generic_mattridiv!(C::StridedMatrix{T}, uploc, isunitc, tfun::Function, A::AbstractMatrix{T}, B::StridedMatrix{T}) where {T<:BlasFloat}
+    if stride(C,1) == stride(B,1) == 1
+        BLAS.trsm!('R', uploc, tfun === identity ? 'N' : tfun === transpose ? 'T' : 'C', isunitc, one(T), B, C === A ? C : copyto!(C, A))
+    else # incompatible with BLAS
+        @invoke generic_mattridiv!(C::AbstractMatrix, uploc, isunitc, tfun::Function, A::AbstractMatrix, B::AbstractMatrix)
+    end
+end
 
 errorbounds(A::AbstractTriangular{T}, X::AbstractVecOrMat{T}, B::AbstractVecOrMat{T}) where {T<:Union{BigFloat,Complex{BigFloat}}} =
     error("not implemented yet! Please submit a pull request.")
@@ -1318,7 +1343,7 @@ end
 ## Generic triangular multiplication
 function generic_trimatmul!(C::AbstractVecOrMat, uploc, isunitc, tfun::Function, A::AbstractMatrix, B::AbstractVecOrMat)
     require_one_based_indexing(C, A, B)
-    check_A_mul_B!_sizes(size(C), size(A), size(B))
+    matmul_size_check(size(C), size(A), size(B))
     oA = oneunit(eltype(A))
     unit = isunitc == 'U'
     @inbounds if uploc == 'U'
@@ -1371,7 +1396,7 @@ end
 # conjugate cases
 function generic_trimatmul!(C::AbstractVecOrMat, uploc, isunitc, ::Function, xA::AdjOrTrans, B::AbstractVecOrMat)
     require_one_based_indexing(C, xA, B)
-    check_A_mul_B!_sizes(size(C), size(xA), size(B))
+    matmul_size_check(size(C), size(xA), size(B))
     A = parent(xA)
     oA = oneunit(eltype(A))
     unit = isunitc == 'U'
@@ -1401,7 +1426,7 @@ end
 
 function generic_mattrimul!(C::AbstractMatrix, uploc, isunitc, tfun::Function, A::AbstractMatrix, B::AbstractMatrix)
     require_one_based_indexing(C, A, B)
-    check_A_mul_B!_sizes(size(C), size(A), size(B))
+    matmul_size_check(size(C), size(A), size(B))
     oB = oneunit(eltype(B))
     unit = isunitc == 'U'
     @inbounds if uploc == 'U'
@@ -1454,7 +1479,7 @@ end
 # conjugate cases
 function generic_mattrimul!(C::AbstractMatrix, uploc, isunitc, ::Function, A::AbstractMatrix, xB::AdjOrTrans)
     require_one_based_indexing(C, A, xB)
-    check_A_mul_B!_sizes(size(C), size(A), size(xB))
+    matmul_size_check(size(C), size(A), size(xB))
     B = parent(xB)
     oB = oneunit(eltype(B))
     unit = isunitc == 'U'

@@ -4,6 +4,7 @@ module TestDense
 
 using Test, LinearAlgebra, Random
 using LinearAlgebra: BlasComplex, BlasFloat, BlasReal
+using Test: GenericArray
 
 const BASE_TEST_PATH = joinpath(Sys.BINDIR, "..", "share", "julia", "test")
 isdefined(Main, :FillArrays) || @eval Main include(joinpath($(BASE_TEST_PATH), "testhelpers", "FillArrays.jl"))
@@ -54,6 +55,18 @@ Random.seed!(1234323)
         @test cond(Mars, 1)   ≈ 7.1
         @test cond(Mars, 2)   ≈ 6.181867355918493
         @test cond(Mars, Inf) ≈ 7.1
+    end
+    @testset "Empty matrices" begin
+        for p in (1,2,Inf)
+            # zero for square (i.e. 0×0) matrices
+            @test cond(zeros(Int, 0, 0), p) === 0.0
+            @test cond(zeros(0, 0), p) === 0.0
+            @test cond(zeros(ComplexF64, 0, 0), p) === 0.0
+            # error for non-square matrices
+            for size in ((10,0), (0,10))
+                @test_throws DimensionMismatch cond(zeros(size...), p)
+            end
+        end
     end
 end
 
@@ -191,6 +204,8 @@ bimg  = randn(n,2)/2
         f = rand(eltya,n-2)
         A = diagm(0 => d)
         @test factorize(A) == Diagonal(d)
+        # test that the generic structure-evaluation method works
+        @test factorize(A) == factorize(GenericArray(A))
         A += diagm(-1 => e)
         @test factorize(A) == Bidiagonal(d,e,:L)
         A += diagm(-2 => f)
@@ -814,6 +829,7 @@ end
 
     A13 = convert(Matrix{elty}, [2 0; 0 2])
     @test typeof(log(A13)) == Array{elty, 2}
+    @test exp(log(A13)) ≈ log(exp(A13)) ≈ A13
 
     T = elty == Float64 ? Symmetric : Hermitian
     @test typeof(log(T(A13))) == T{elty, Array{elty, 2}}
@@ -964,6 +980,16 @@ end
         @test sqrt(A8)^2 ≈ A8
         @test typeof(sqrt(A8)) == Matrix{elty}
     end
+end
+@testset "sqrt for diagonal" begin
+    A = diagm(0 => [1, 2, 3])
+    @test sqrt(A)^2 ≈ A
+
+    A = diagm(0 => [1.0, -1.0])
+    @test sqrt(A) == diagm(0 => [1.0, 1.0im])
+    @test sqrt(A)^2 ≈ A
+    B = im*A
+    @test sqrt(B)^2 ≈ B
 end
 
 @testset "issue #40141" begin
@@ -1277,6 +1303,7 @@ end
     T = cbrt(Symmetric(S,:U))
     @test T*T*T ≈ S
     @test eltype(S) == eltype(T)
+    @test cbrt(Array(Symmetric(S,:U))) == T
     # Real valued symmetric
     S =  (A -> (A+A')/2)(randn(N,N))
     T = cbrt(Symmetric(S,:L))
@@ -1297,6 +1324,16 @@ end
     T = cbrt(A)
     @test T*T*T ≈ A
     @test eltype(A) == eltype(T)
+    @testset "diagonal" begin
+        A = diagm(0 => [1, 2, 3])
+        @test cbrt(A)^3 ≈ A
+    end
+    @testset "empty" begin
+        A = Matrix{Float64}(undef, 0, 0)
+        @test cbrt(A) == A
+        A = Matrix{Int}(undef, 0, 0)
+        @test cbrt(A) isa Matrix{Float64}
+    end
 end
 
 @testset "tr" begin
@@ -1326,6 +1363,39 @@ end
             @test f(A) == f(M)
         end
     end
+end
+
+@testset "structure of dense matrices" begin
+    # A is neither triangular nor symmetric/Hermitian
+    A = [1 im 2; -im 0  3; 2 3 im]
+    @test factorize(A) isa LU{ComplexF64, Matrix{ComplexF64}, Vector{Int}}
+    @test !any(LinearAlgebra.getstructure(A))
+end
+
+@testset "SingularException show" begin
+    A = diagm(0=> [1, 0])
+    @test_throws "matrix is singular; factorization failed" inv(A)
+end
+
+@testset "copytri_maybe_inplace" begin
+    R = reshape(1:16,4,4)
+    for conjugate in [true, false], diag in [true, false]
+        @test LinearAlgebra.copytri_maybe_inplace(R, 'U', conjugate, diag) == Symmetric(R, :U)
+        @test LinearAlgebra.copytri_maybe_inplace(R, 'L', conjugate, diag) == Symmetric(R, :L)
+    end
+
+    Rc = reshape(StepRangeLen(1+2im, 3 + 4im, 16), 4, 4)
+    Ac = Array(Rc)
+    @testset for conjugate in [true, false], diag in [true, false]
+        tR = LinearAlgebra.copytri_maybe_inplace(Rc, 'U', conjugate, diag)
+        tA = LinearAlgebra.copytri_maybe_inplace(copy(Ac), 'U', conjugate, diag)
+        @test tR == tA
+        tR = LinearAlgebra.copytri_maybe_inplace(Rc, 'L', conjugate, diag)
+        tA = LinearAlgebra.copytri_maybe_inplace(copy(Ac), 'L', conjugate, diag)
+        @test tR == tA
+    end
+
+    @test_throws ArgumentError LinearAlgebra.copytri_maybe_inplace(Rc, 'X')
 end
 
 end # module TestDense

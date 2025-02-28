@@ -31,7 +31,7 @@ The object has two fields:
   - The subdiagonal part contains the reflectors ``v_i`` stored in a packed format where
     ``v_i`` is the ``i``th column of the matrix `V = I + tril(F.factors, -1)`.
 
-* `τ` is a vector  of length `min(m,n)` containing the coefficients ``\tau_i``.
+* `τ` is a vector  of length `min(m,n)` containing the coefficients ``\\tau_i``.
 """
 struct QR{T,S<:AbstractMatrix{T},C<:AbstractVector{T}} <: Factorization{T}
     factors::S
@@ -535,11 +535,11 @@ function ldiv!(A::QRCompactWY{T}, B::AbstractMatrix{T}) where {T}
     return B
 end
 
-function rank(A::QRPivoted; atol::Real=0, rtol::Real=min(size(A)...) * eps(real(float(one(eltype(A.Q))))) * iszero(atol))
+function rank(A::QRPivoted; atol::Real=0, rtol::Real=min(size(A)...) * eps(real(float(eltype(A)))) * iszero(atol))
     m = min(size(A)...)
     m == 0 && return 0
-    tol = max(atol, rtol*abs(A.R[1,1]))
-    return something(findfirst(i -> abs(A.R[i,i]) <= tol, 1:m), m+1) - 1
+    tol = max(atol, rtol*abs(A.factors[1,1]))
+    return something(findfirst(i -> abs(A.factors[i,i]) <= tol, 1:m), m+1) - 1
 end
 
 # Julia implementation similar to xgelsy
@@ -725,7 +725,8 @@ function ldiv!(Fadj::AdjointFactorization{<:Any,<:Union{QR,QRCompactWY,QRPivoted
 
     # For underdetermined system, the triangular solve should only be applied to the top
     # part of B that contains the rhs. For square problems, the view corresponds to B itself
-    ldiv!(LowerTriangular(adjoint(F.R)), view(B, 1:size(F.R, 2), :))
+    R = F.R
+    ldiv!(LowerTriangular(adjoint(R)), view(B, axes(R, 2), :))
     lmul!(F.Q, B)
 
     return B

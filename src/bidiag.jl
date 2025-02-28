@@ -109,8 +109,8 @@ julia> Bidiagonal(A, :L) # contains the main diagonal and first subdiagonal of A
  ⋅  ⋅  4  4
 ```
 """
-function Bidiagonal(A::AbstractMatrix, uplo::Symbol)
-    Bidiagonal(diag(A, 0), diag(A, uplo === :U ? 1 : -1), uplo)
+function (::Type{Bi})(A::AbstractMatrix, uplo::Symbol) where {Bi<:Bidiagonal}
+    Bi(diag(A, 0), diag(A, uplo === :U ? 1 : -1), uplo)
 end
 
 
@@ -161,7 +161,7 @@ end
         # we explicitly compare the possible bands as b.band may be constant-propagated
         return @inbounds A.ev[b.index]
     else
-        return diagzero(A, Tuple(_cartinds(b))...)
+        return diagzero(A, b)
     end
 end
 
@@ -220,7 +220,12 @@ promote_rule(::Type{<:Tridiagonal}, ::Type{<:Bidiagonal}) = Tridiagonal
 AbstractMatrix{T}(A::Bidiagonal) where {T} = Bidiagonal{T}(A)
 AbstractMatrix{T}(A::Bidiagonal{T}) where {T} = copy(A)
 
-convert(::Type{T}, m::AbstractMatrix) where {T<:Bidiagonal} = m isa T ? m : T(m)::T
+function convert(::Type{T}, A::AbstractMatrix) where T<:Bidiagonal
+    checksquare(A)
+    isbanded(A, -1, 1) || throw(InexactError(:convert, T, A))
+    iszero(diagview(A, 1)) ? T(A, :L) :
+        iszero(diagview(A, -1)) ? T(A, :U) : throw(InexactError(:convert, T, A))
+end
 
 similar(B::Bidiagonal, ::Type{T}) where {T} = Bidiagonal(similar(B.dv, T), similar(B.ev, T), B.uplo)
 similar(B::Bidiagonal, ::Type{T}, dims::Union{Dims{1},Dims{2}}) where {T} = similar(B.dv, T, dims)
@@ -246,6 +251,18 @@ function svd!(M::Bidiagonal{<:BlasReal}; full::Bool = false)
 end
 function svd(M::Bidiagonal; kw...)
     svd!(copy(M), kw...)
+end
+
+###################
+#     opnorm      #
+###################
+
+function _opnorm1Inf(B::Bidiagonal, p)
+    size(B, 1) == 1 && return norm(first(B.dv))
+    case = xor(p == 1, istriu(B))
+    normd1, normdend = norm(first(B.dv)), norm(last(B.dv))
+    normd1, normdend = case ? (zero(normd1), normdend) : (normd1, zero(normdend))
+    return max(mapreduce(t -> sum(norm, t), max, zip(view(B.dv, (1:length(B.ev)) .+ !case), B.ev)), normdend)
 end
 
 ####################
@@ -393,14 +410,15 @@ end
 function diag(M::Bidiagonal, n::Integer=0)
     # every branch call similar(..., ::Int) to make sure the
     # same vector type is returned independent of n
-    v = similar(M.dv, max(0, length(M.dv)-abs(n)))
+    dinds = diagind(M, n, IndexStyle(M))
+    v = similar(M.dv, length(dinds))
     if n == 0
         copyto!(v, M.dv)
     elseif (n == 1 && M.uplo == 'U') ||  (n == -1 && M.uplo == 'L')
         copyto!(v, M.ev)
     elseif -size(M,1) <= n <= size(M,1)
-        for i in eachindex(v)
-            v[i] = M[BandIndex(n,i)]
+        for i in eachindex(v, dinds)
+            @inbounds v[i] = M[BandIndex(n,i)]
         end
     end
     return v
@@ -485,7 +503,7 @@ end
 
 # B .= A * B
 function lmul!(A::Bidiagonal, B::AbstractVecOrMat)
-    _muldiag_size_check(size(A), size(B))
+    matmul_size_check(size(A), size(B))
     (; dv, ev) = A
     if A.uplo == 'U'
         for k in axes(B,2)
@@ -506,7 +524,7 @@ function lmul!(A::Bidiagonal, B::AbstractVecOrMat)
 end
 # B .= D * B
 function lmul!(D::Diagonal, B::Bidiagonal)
-    _muldiag_size_check(size(D), size(B))
+    matmul_size_check(size(D), size(B))
     (; dv, ev) = B
     isL = B.uplo == 'L'
     dv[1] = D.diag[1] * dv[1]
@@ -518,7 +536,7 @@ function lmul!(D::Diagonal, B::Bidiagonal)
 end
 # B .= B * A
 function rmul!(B::AbstractMatrix, A::Bidiagonal)
-    _muldiag_size_check(size(A), size(B))
+    matmul_size_check(size(A), size(B))
     (; dv, ev) = A
     if A.uplo == 'U'
         for k in reverse(axes(dv,1)[2:end])
@@ -543,7 +561,7 @@ function rmul!(B::AbstractMatrix, A::Bidiagonal)
 end
 # B .= B * D
 function rmul!(B::Bidiagonal, D::Diagonal)
-    _muldiag_size_check(size(B), size(D))
+    matmul_size_check(size(B), size(D))
     (; dv, ev) = B
     isU = B.uplo == 'U'
     dv[1] *= D.diag[1]
@@ -552,22 +570,6 @@ function rmul!(B::Bidiagonal, D::Diagonal)
         dv[i+1] *= D.diag[i+1]
     end
     return B
-end
-
-@noinline function check_A_mul_B!_sizes((mC, nC)::NTuple{2,Integer}, (mA, nA)::NTuple{2,Integer}, (mB, nB)::NTuple{2,Integer})
-    # check for matching sizes in one column of B and C
-    check_A_mul_B!_sizes((mC,), (mA, nA), (mB,))
-    # ensure that the number of columns in B and C match
-    if nB != nC
-        throw(DimensionMismatch(lazy"second dimension of output C, $nC, and second dimension of B, $nB, must match"))
-    end
-end
-@noinline function check_A_mul_B!_sizes((mC,)::Tuple{Integer}, (mA, nA)::NTuple{2,Integer}, (mB,)::Tuple{Integer})
-    if mA != mC
-        throw(DimensionMismatch(lazy"first dimension of A, $mA, and first dimension of output C, $mC, must match"))
-    elseif nA != mB
-        throw(DimensionMismatch(lazy"second dimension of A, $nA, and first dimension of B, $mB, must match"))
-    end
 end
 
 # function to get the internally stored vectors for Bidiagonal and [Sym]Tridiagonal
@@ -591,7 +593,7 @@ _mul!(C::AbstractMatrix, A::BiTriSym, B::Bidiagonal, _add::MulAddMul) =
     _bibimul!(C, A, B, _add)
 function _bibimul!(C, A, B, _add)
     require_one_based_indexing(C)
-    check_A_mul_B!_sizes(size(C), size(A), size(B))
+    matmul_size_check(size(C), size(A), size(B))
     n = size(A,1)
     iszero(n) && return C
     # We use `_rmul_or_fill!` instead of `_modify!` here since using
@@ -839,7 +841,7 @@ _mul!(C::AbstractMatrix, A::BiTriSym, B::Diagonal, alpha::Number, beta::Number) 
     @stable_muladdmul _mul!(C, A, B, MulAddMul(alpha, beta))
 function _mul!(C::AbstractMatrix, A::BiTriSym, B::Diagonal, _add::MulAddMul)
     require_one_based_indexing(C)
-    check_A_mul_B!_sizes(size(C), size(A), size(B))
+    matmul_size_check(size(C), size(A), size(B))
     n = size(A,1)
     iszero(n) && return C
     _rmul_or_fill!(C, _add.beta)  # see the same use above
@@ -882,7 +884,7 @@ end
 
 function _mul!(C::AbstractMatrix, A::Bidiagonal, B::Diagonal, _add::MulAddMul)
     require_one_based_indexing(C)
-    check_A_mul_B!_sizes(size(C), size(A), size(B))
+    matmul_size_check(size(C), size(A), size(B))
     n = size(A,1)
     iszero(n) && return C
     _rmul_or_fill!(C, _add.beta)  # see the same use above
@@ -912,7 +914,7 @@ function _mul!(C::AbstractMatrix, A::Bidiagonal, B::Diagonal, _add::MulAddMul)
 end
 
 function _mul!(C::Bidiagonal, A::Bidiagonal, B::Diagonal, _add::MulAddMul)
-    check_A_mul_B!_sizes(size(C), size(A), size(B))
+    matmul_size_check(size(C), size(A), size(B))
     n = size(A,1)
     iszero(n) && return C
     iszero(_add.alpha) && return _rmul_or_fill!(C, _add.beta)
@@ -945,7 +947,7 @@ end
 
 function _mul!(C::AbstractVecOrMat, A::BiTriSym, B::AbstractVecOrMat, _add::MulAddMul)
     require_one_based_indexing(C, B)
-    check_A_mul_B!_sizes(size(C), size(A), size(B))
+    matmul_size_check(size(C), size(A), size(B))
     nA = size(A,1)
     nB = size(B,2)
     (iszero(nA) || iszero(nB)) && return C
@@ -1015,7 +1017,7 @@ end
 
 function _mul!(C::AbstractMatrix, A::AbstractMatrix, B::TriSym, _add::MulAddMul)
     require_one_based_indexing(C, A)
-    check_A_mul_B!_sizes(size(C), size(A), size(B))
+    matmul_size_check(size(C), size(A), size(B))
     n = size(A,1)
     m = size(B,2)
     (iszero(_add.alpha) || iszero(m)) && return _rmul_or_fill!(C, _add.beta)
@@ -1051,7 +1053,7 @@ end
 
 function _mul!(C::AbstractMatrix, A::AbstractMatrix, B::Bidiagonal, _add::MulAddMul)
     require_one_based_indexing(C, A)
-    check_A_mul_B!_sizes(size(C), size(A), size(B))
+    matmul_size_check(size(C), size(A), size(B))
     m, n = size(A)
     (iszero(m) || iszero(n)) && return C
     iszero(_add.alpha) && return _rmul_or_fill!(C, _add.beta)
@@ -1081,7 +1083,7 @@ _mul!(C::AbstractMatrix, A::Diagonal, B::TriSym, _add::MulAddMul) =
     _dibimul!(C, A, B, _add)
 function _dibimul!(C, A, B, _add)
     require_one_based_indexing(C)
-    check_A_mul_B!_sizes(size(C), size(A), size(B))
+    matmul_size_check(size(C), size(A), size(B))
     n = size(A,1)
     iszero(n) && return C
     # ensure that we fill off-band elements in the destination
@@ -1125,7 +1127,7 @@ function _dibimul!(C, A, B, _add)
 end
 function _dibimul!(C::AbstractMatrix, A::Diagonal, B::Bidiagonal, _add)
     require_one_based_indexing(C)
-    check_A_mul_B!_sizes(size(C), size(A), size(B))
+    matmul_size_check(size(C), size(A), size(B))
     n = size(A,1)
     iszero(n) && return C
     # ensure that we fill off-band elements in the destination
@@ -1156,7 +1158,7 @@ function _dibimul!(C::AbstractMatrix, A::Diagonal, B::Bidiagonal, _add)
     C
 end
 function _dibimul!(C::Bidiagonal, A::Diagonal, B::Bidiagonal, _add)
-    check_A_mul_B!_sizes(size(C), size(A), size(B))
+    matmul_size_check(size(C), size(A), size(B))
     n = size(A,1)
     n == 0 && return C
     iszero(_add.alpha) && return _rmul_or_fill!(C, _add.beta)

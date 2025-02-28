@@ -319,8 +319,8 @@ const AdjointAbsVec{T} = Adjoint{T,<:AbstractVector}
 const AdjointAbsMat{T} = Adjoint{T,<:AbstractMatrix}
 const TransposeAbsVec{T} = Transpose{T,<:AbstractVector}
 const TransposeAbsMat{T} = Transpose{T,<:AbstractMatrix}
-const AdjOrTransAbsVec{T} = AdjOrTrans{T,<:AbstractVector}
-const AdjOrTransAbsMat{T} = AdjOrTrans{T,<:AbstractMatrix}
+const AdjOrTransAbsVec{T,V<:AbstractVector} = AdjOrTrans{T,V}
+const AdjOrTransAbsMat{T,M<:AbstractMatrix} = AdjOrTrans{T,M}
 
 # for internal use below
 wrapperop(_) = identity
@@ -381,6 +381,20 @@ AbstractMatrix{T}(A::AdjOrTransAbsVec) where {T} = wrapperop(A)(AbstractVector{T
 parent(A::AdjOrTrans) = A.parent
 vec(v::TransposeAbsVec{<:Number}) = parent(v)
 vec(v::AdjointAbsVec{<:Real}) = parent(v)
+
+Base.reshape(v::TransposeAbsVec{<:Number}, ::Val{1}) = parent(v)
+Base.reshape(v::AdjointAbsVec{<:Real}, ::Val{1}) = parent(v)
+
+ # these make eachrow(A') produce simpler views
+@inline Base.unsafe_view(A::Transpose{<:Number, <:AbstractMatrix}, i::Integer, j::AbstractArray) =
+    Base.unsafe_view(parent(A), j, i)
+@inline Base.unsafe_view(A::Transpose{<:Number, <:AbstractMatrix}, i::AbstractArray, j::Integer) =
+    Base.unsafe_view(parent(A), j, i)
+
+@inline Base.unsafe_view(A::Adjoint{<:Real, <:AbstractMatrix}, i::Integer, j::AbstractArray) =
+    Base.unsafe_view(parent(A), j, i)
+@inline Base.unsafe_view(A::Adjoint{<:Real, <:AbstractMatrix}, i::AbstractArray, j::Integer) =
+    Base.unsafe_view(parent(A), j, i)
 
 ### concatenation
 # preserve Adjoint/Transpose wrapper around vectors
